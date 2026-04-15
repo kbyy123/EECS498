@@ -5,6 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
+A1/cifar-10-batches-py/
+A1/cifar-10-python.tar.gz
 
 # Virtual environments
 .venv
