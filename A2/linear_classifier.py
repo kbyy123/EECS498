@@ -169,7 +169,8 @@ def svm_loss_naive(
                 # at the same time that the loss is being computed.                   #
                 #######################################################################
                 # Replace "pass" statement with your code
-                pass
+                dW[:, j] += X[i]
+                dW[:, y[i]] -= X[i]
                 #######################################################################
                 #                       END OF YOUR CODE                              #
                 #######################################################################
@@ -177,6 +178,7 @@ def svm_loss_naive(
     # Right now the loss is a sum over all training examples, but we want it
     # to be an average instead so we divide by num_train.
     loss /= num_train
+    dW /= num_train
 
     # Add regularization to the loss.
     loss += reg * torch.sum(W * W)
@@ -187,7 +189,7 @@ def svm_loss_naive(
     # and add it to dW. (part 2)                                                #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    dW += 2 * reg * W
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -223,7 +225,19 @@ def svm_loss_vectorized(
     # result in loss.                                                           #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    num_train = X.shape[0]
+    num_classes = W.shape[1]
+
+    scores = X.mm(W)
+    correct_class_score = scores[torch.arange(num_train), y].reshape([num_train, 1])
+    margin = torch.max(torch.zeros_like(scores), scores - correct_class_score + 1)
+    margin[torch.arange(num_train), y] = 0
+
+    mask = (margin > 0).to(X.dtype)
+    loss += margin.sum()
+    loss /= num_train
+    loss += reg * torch.sum(W * W)
+    
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -238,7 +252,10 @@ def svm_loss_vectorized(
     # loss.                                                                     #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    mask[torch.arange(num_train), y] = -mask.sum(dim=1)
+    dW += X.t().mm(mask)
+    dW /= num_train
+    dW += 2 * reg * W
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -263,7 +280,9 @@ def sample_batch(
     # Hint: Use torch.randint to generate indices.                          #
     #########################################################################
     # Replace "pass" statement with your code
-    pass
+    random_idx = torch.randint(0, num_train, (batch_size,))
+    X_batch = X[random_idx]
+    y_batch = y[random_idx]
     #########################################################################
     #                       END OF YOUR CODE                                #
     #########################################################################
@@ -331,7 +350,7 @@ def train_linear_classifier(
         # Update the weights using the gradient and the learning rate.          #
         #########################################################################
         # Replace "pass" statement with your code
-        pass
+        W -= grad * learning_rate
         #########################################################################
         #                       END OF YOUR CODE                                #
         #########################################################################
@@ -362,7 +381,7 @@ def predict_linear_classifier(W: torch.Tensor, X: torch.Tensor):
     # Implement this method. Store the predicted labels in y_pred.            #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    y_pred = X.mm(W).argmax(dim=1)
     ###########################################################################
     #                           END OF YOUR CODE                              #
     ###########################################################################
@@ -388,7 +407,8 @@ def svm_get_search_params():
     # TODO:   add your own hyper parameter lists.                             #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    learning_rates = [6 * 1e-3, 7 * 1e-3, 8 * 1e-3, 9 * 1e-3, 10 * 1e-3]
+    regularization_strengths = [1e-3, 3 * 1e-3, 6 * 1e-3, 9 * 1e-3, 12 * 1e-3]
     ###########################################################################
     #                           END OF YOUR CODE                              #
     ###########################################################################
@@ -437,10 +457,14 @@ def test_one_param_set(
     ###########################################################################
     # Feel free to uncomment this, at the very beginning,
     # and don't forget to remove this line before submitting your final version
-    # num_iters = 100
-
+    num_iters = 400
+    
     # Replace "pass" statement with your code
-    pass
+    cls.train(data_dict['X_train'], data_dict['y_train'], lr, reg, num_iters)
+    y_train_pred = cls.predict(data_dict["X_train"])
+    y_val_pred = cls.predict(data_dict['X_val'])
+    train_acc = (y_train_pred == data_dict['y_train']).sum().item() / y_train_pred.shape[0]
+    val_acc = (y_val_pred == data_dict['y_val']).sum().item() / y_val_pred.shape[0]
     ############################################################################
     #                            END OF YOUR CODE                              #
     ############################################################################
@@ -487,7 +511,26 @@ def softmax_loss_naive(
     # regularization!                                                           #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    num_train = X.shape[0]
+    num_classes = W.shape[1]
+
+    for i in range(num_train):
+        scores = W.t().mv(X[i])
+        scores -= torch.max(scores)
+        exp_scores = scores.exp()
+        exp_scores_sum = exp_scores.sum()
+        loss += -scores[y[i]] + torch.log(exp_scores_sum)
+        for j in range(num_classes):
+            if j == y[i]:
+                dW[:, j] += (exp_scores[j] / exp_scores_sum - 1) * X[i]
+            else:
+                dW[:, j] += (exp_scores[j] / exp_scores_sum) * X[i]
+        
+
+    loss /= num_train
+    dW /= num_train
+    loss += reg * torch.sum(W * W)
+    dW += 2 * reg * W
     #############################################################################
     #                          END OF YOUR CODE                                 #
     #############################################################################
@@ -517,7 +560,28 @@ def softmax_loss_vectorized(
     # regularization!                                                           #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    num_train = X.shape[0]
+    num_classes = W.shape[1]
+    train_idx = torch.arange(num_train)
+
+    scores = X.mm(W)
+    scores -= scores.max(dim=1, keepdim=True).values
+    exp_scores = scores.exp()
+    exp_scores_sum = exp_scores.sum(dim=1)
+    
+    loss += (torch.log(exp_scores_sum)).sum().item() - scores[train_idx, y].sum().item()
+
+    out = exp_scores.clone()
+    out[train_idx, y] -= exp_scores_sum
+    out /= exp_scores_sum.reshape([num_train, 1])
+    dW += X.t().mm(out)
+
+    loss /= num_train
+    dW /= num_train
+
+    loss += reg * torch.sum(W * W)
+    dW += 2 * reg * W
+
     #############################################################################
     #                          END OF YOUR CODE                                 #
     #############################################################################
@@ -536,8 +600,8 @@ def softmax_get_search_params():
     - regularization_strengths: regularization strengths candidates
                                 e.g. [1e0, 1e1, ...]
     """
-    learning_rates = []
-    regularization_strengths = []
+    learning_rates = [1e-3, 1e-2, 1e-1, 1, 10]
+    regularization_strengths = [1e-2, 1e-1, 1, 1e1, 1e2]
 
     ###########################################################################
     # TODO: Add your own hyper parameter lists. This should be similar to the #
