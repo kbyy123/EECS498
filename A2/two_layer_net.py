@@ -147,7 +147,9 @@ def nn_forward_pass(params: Dict[str, torch.Tensor], X: torch.Tensor):
     # shape (N, C).                                                            #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    hidden = X.mm(W1) + b1
+    hidden[hidden < 0] = 0
+    scores = hidden.mm(W2) + b2
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -212,7 +214,13 @@ def nn_forward_backward(
     # (Check Numeric Stability in http://cs231n.github.io/linear-classify/).   #
     ############################################################################
     # Replace "pass" statement with your code
-    pass
+    train_idx = torch.arange(N)
+    scores -= scores.max(dim=1, keepdim=True).values
+    exp_scores = scores.exp()
+    exp_scores_sum = exp_scores.sum(dim=1)
+    loss = (torch.log(exp_scores_sum)).sum().item() - scores[train_idx, y].sum().item()
+    loss /= N
+    loss += reg * (torch.sum(W1 * W1) + torch.sum(W2 * W2))
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -226,7 +234,23 @@ def nn_forward_backward(
     # tensor of same size                                                     #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    ds = exp_scores.clone()
+    ds[train_idx, y] -= exp_scores_sum
+    ds /= exp_scores_sum.reshape([-1, 1])
+    ds /= N
+
+    y1 = X.mm(W1)
+    z1 = y1 + b1
+
+    grads['b2'] = ds.sum(dim=0)
+    grads['W2'] = h1.t().mm(ds) + 2 * reg * W2
+    dh1 = ds.mm(W2.t())
+    dz1 = dh1.clone()
+    dz1[z1 <= 0] = 0
+    # grads['h1'] = dh1
+    grads['b1'] = dz1.sum(dim=0)
+    grads['W1'] = X.t().mm(dz1) + 2 * reg * W1
+    # grads['X'] = dz1.mm(W1.t())
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -307,7 +331,10 @@ def nn_train(
         # stored in the grads dictionary defined above.                         #
         #########################################################################
         # Replace "pass" statement with your code
-        pass
+        params['W1'] -= learning_rate * grads['W1']
+        params['W2'] -= learning_rate * grads['W2']
+        params['b1'] -= learning_rate * grads['b1']
+        params['b2'] -= learning_rate * grads['b2']
         #########################################################################
         #                             END OF YOUR CODE                          #
         #########################################################################
@@ -365,7 +392,10 @@ def nn_predict(
     # TODO: Implement this function; it should be VERY simple!                #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    hidden = X.mm(params['W1']) + params['b1']
+    hidden[hidden <= 0] = 0
+    scores = hidden.mm(params['W2']) + params['b2']
+    y_pred = scores.max(dim=1).indices
     ###########################################################################
     #                              END OF YOUR CODE                           #
     ###########################################################################
@@ -399,7 +429,10 @@ def nn_get_search_params():
     # classifier.                                                             #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    learning_rates = [1]
+    hidden_sizes = [512]
+    regularization_strengths = [1e-5, 1e-4]
+    learning_rate_decays = [0.99]
     ###########################################################################
     #                           END OF YOUR CODE                              #
     ###########################################################################
@@ -460,9 +493,40 @@ def find_best_net(
     # automatically like we did on the previous exercises.                      #
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    input_size = 3 * 32 * 32
+    num_classes = 10
+    learning_rates, hidden_sizes, regularization_strengths, learning_rate_decays = get_param_set_fn()
+
+    best_params = None
+    for lr in learning_rates:
+        for hs in hidden_sizes:
+            for rs in regularization_strengths:
+                for lrd in learning_rate_decays:
+                    net = TwoLayerNet(input_size, hs, num_classes, dtype=data_dict['X_train'].dtype, device=data_dict['X_train'].device)
+
+                    stats = net.train(
+                        data_dict['X_train'], data_dict['y_train'],
+                        data_dict['X_val'], data_dict['y_val'],
+                        learning_rate=lr, learning_rate_decay=lrd,
+                        reg=rs, num_iters=1500, batch_size=1000, verbose=True
+                        )
+                
+                    y_val_pred = net.predict(data_dict['X_val'])
+                    val_acc = 100.0 * (y_val_pred == data_dict['y_val']).double().mean().item()
+
+                    if val_acc > best_val_acc:
+                        best_net = net
+                        best_stat = stats
+                        best_val_acc = val_acc
+                        best_params = {
+                            'learning_rate': lr,
+                            'hidden_size': hs,
+                            'reg': rs,
+                            'learning_rate_decay': lrd,
+                        }
+    
     #############################################################################
     #                               END OF YOUR CODE                            #
     #############################################################################
 
-    return best_net, best_stat, best_val_acc
+    return best_net, best_stat, best_val_acc, best_params

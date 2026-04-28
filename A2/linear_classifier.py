@@ -227,17 +227,15 @@ def svm_loss_vectorized(
     # Replace "pass" statement with your code
     num_train = X.shape[0]
     num_classes = W.shape[1]
+    train_idx = torch.arange(num_train)
 
     scores = X.mm(W)
-    correct_class_score = scores[torch.arange(num_train), y].reshape([num_train, 1])
-    margin = torch.max(torch.zeros_like(scores), scores - correct_class_score + 1)
-    margin[torch.arange(num_train), y] = 0
-
-    mask = (margin > 0).to(X.dtype)
-    loss += margin.sum()
-    loss /= num_train
+    correct_class_score = scores[train_idx, y].reshape(-1, 1)
+    scores = scores - correct_class_score + 1
+    scores[train_idx, y] = 0
+    mask = scores > 0
+    loss = scores[mask].sum() / num_train
     loss += reg * torch.sum(W * W)
-    
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -252,9 +250,11 @@ def svm_loss_vectorized(
     # loss.                                                                     #
     #############################################################################
     # Replace "pass" statement with your code
-    mask[torch.arange(num_train), y] = -mask.sum(dim=1)
-    dW += X.t().mm(mask)
-    dW /= num_train
+    coeffi = mask.to(W.dtype)
+    coeffi[train_idx, y] = -coeffi.sum(dim=1)
+
+    dW = X.t().mm(coeffi) / num_train
+
     dW += 2 * reg * W
     #############################################################################
     #                             END OF YOUR CODE                              #
