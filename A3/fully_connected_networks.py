@@ -40,7 +40,7 @@ class Linear(object):
         ######################################################################
         # Replace "pass" statement with your code
         N = x.shape[0]
-        x_flat = x.view(N, -1)
+        x_flat = x.reshape(N, -1)
         out = x_flat.matmul(w) + b
         ######################################################################
         #                        END OF YOUR CODE                            #
