@@ -112,7 +112,9 @@ def rnn_step_forward(x, prev_h, Wx, Wh, b):
     # and cache variables respectively.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    out = x @ Wx + prev_h @ Wh + b
+    next_h = torch.tanh(out)
+    cache = (x, prev_h, Wx, Wh, b, out)
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -142,7 +144,14 @@ def rnn_step_backward(dnext_h, cache):
     # terms of the output value from tanh.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    # tanh'(x) = 1- tanh^2(x)
+    x, prev_h, Wx, Wh, b, out = cache
+    dout = dnext_h * (1 - torch.tanh(out)**2) # dout (N, H)
+    dx = dout @ Wx.t() # (N, D) = (N, H) @ (H, D)
+    dWx = x.t() @ dout # (D, H) = (D, N) @ (N, H)
+    dprev_h = dout @ Wh.t()
+    dWh = prev_h.t() @ dout
+    db = dout.sum(dim=0)
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -174,7 +183,16 @@ def rnn_forward(x, h0, Wx, Wh, b):
     # above. You can use a for loop to help compute the forward pass.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    N, T, D = x.shape
+    H = h0.shape[1]
+    h_list = []
+    prev_h = h0
+    cache_in_steps = {}
+    for i in range(T):
+        prev_h, cache_in_steps[f'cache{i}'] = rnn_step_forward(x[:, i, :], prev_h, Wx, Wh, b)
+        h_list.append(prev_h)
+    h = torch.stack(h_list, dim=1)
+    cache = (x, h0, Wx, Wh, b, h, cache_in_steps)
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -207,7 +225,31 @@ def rnn_backward(dh, cache):
     # defined above. You can use a for loop to help compute the backward pass.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    x, h0, Wx, Wh, b, h, cache_in_steps = cache
+    N, T, D = x.shape
+    H = h0.shape[1]
+    
+    dh = dh.clone() 
+    # 计算没错，需要 clone 一个 dh 是因为 notebook 验证时用的是原来的 dh
+    # 如果原地修改的话，notebook 中会显示误差（但实际上没错）
+    dx = torch.zeros_like(x)
+    dh0 = torch.zeros_like(h0)
+    dWx = torch.zeros_like(Wx)
+    dWh = torch.zeros_like(Wh)
+    db = torch.zeros_like(b)
+    for i in range(T - 1, -1, -1):
+        # x, prev_h, Wx, Wh, b, out = cache
+        step_cache = cache_in_steps[f'cache{i}']
+
+        step_dx, step_dprev_h, step_dWx, step_dWh, step_db = rnn_step_backward(dh[:, i, :], step_cache)
+        dx[:, i, :] += step_dx
+        dWx += step_dWx
+        dWh += step_dWh
+        db += step_db
+        if i == 0:
+            dh0 = step_dprev_h
+        else:
+            dh[:, i - 1, :] += step_dprev_h
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -300,7 +342,7 @@ class WordEmbedding(nn.Module):
         # TODO: Implement the forward pass for word embeddings.
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        out = self.W_embed[x]
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -337,7 +379,7 @@ def temporal_softmax_loss(x, y, ignore_index=None):
     #
     # REQUIREMENT: This part MUST be done in one single line of code!
     #
-    # HINT: Look up the function torch.functional.cross_entropy, set
+    # HINT: Look up the function torch.nn.functional.cross_entropy, set
     # ignore_index to the variable ignore_index (i.e., index of NULL) and
     # set reduction to either 'sum' or 'mean' (avoid using 'none' for now).
     #
@@ -345,7 +387,12 @@ def temporal_softmax_loss(x, y, ignore_index=None):
     # all timesteps and *averaging* across the minibatch.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    # cross_entropy 要求类别维度必须为第 1 维
+    # 要求为 "summing" loss (reduction='sum)，并在 minibatch 上 "averaging" (/ x.shape[0])
+    loss = torch.nn.functional.cross_entropy(x.reshape(-1, x.shape[-1]),
+                                             y.reshape(-1),
+                                             ignore_index=ignore_index, 
+                                             reduction='sum') / x.shape[0]
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -410,13 +457,33 @@ class CaptioningRNN(nn.Module):
         # in the captioning_forward function on layers you need to create
         #
         # You may want to check the following pre-defined classes:
-        # ImageEncoder WordEmbedding, RNN, LSTM, AttentionLSTM, nn.Linear
+        # ImageEncoder, WordEmbedding, RNN, LSTM, AttentionLSTM, nn.Linear
         #
         # (1) output projection (from RNN hidden state to vocab probability)
         # (2) feature projection (from CNN pooled feature to h0)
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        self.image_encoder = ImageEncoder(image_encoder_pretrained)
+
+        # (N, 400) --> (N, H)
+        if cell_type == 'attn':
+            self.projection_layer1 = nn.Conv2d(input_dim, hidden_dim, kernel_size=1) 
+        else:
+            self.projection_layer1 = nn.Linear(input_dim, hidden_dim)
+
+        
+        self.word_embedding = WordEmbedding(vocab_size, wordvec_dim)
+        
+        if cell_type == 'rnn':
+            self.rnn = RNN(wordvec_dim, hidden_dim)
+        elif cell_type == 'lstm':
+            self.lstm = LSTM(wordvec_dim, hidden_dim)
+        else:
+            self.attn =AttentionLSTM(wordvec_dim, hidden_dim)
+
+        # (N, T, H) --> (N, T, V)
+        self.projection_layer2 = nn.Linear(hidden_dim, vocab_size)
+
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -444,7 +511,7 @@ class CaptioningRNN(nn.Module):
         # be the first word.
         captions_in = captions[:, :-1]
         captions_out = captions[:, 1:]
-
+        
         loss = 0.0
         ######################################################################
         # TODO: Implement the forward pass for the CaptioningRNN.
@@ -467,7 +534,39 @@ class CaptioningRNN(nn.Module):
         # Do not worry about regularizing the weights or their gradients!
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+
+        #  用 caption_in 的词向量当作输入 x，图片特征当作初始隐状态 h0
+        if self.cell_type != 'attn':
+            # (1) (N, 3, 112, 112) --> (N, D, 4, 4) --> (N, D) --> (N, H)
+            features = self.image_encoder(images)
+            pooled_features = features.mean(dim=(2, 3))
+            h0 = self.projection_layer1(pooled_features)
+            # (2) (N, T) --> (N, T, W)
+            captions_in_vectors = self.word_embedding(captions_in)
+            # (3) (N, T, W) --> (N, T, H)
+            if self.cell_type == 'rnn':
+                hn = self.rnn.forward(captions_in_vectors, h0)
+            elif self.cell_type == 'lstm':
+                hn = self.lstm.forward(captions_in_vectors, h0)
+
+            # (4) (N, T, H) --> (N, T, V)
+            scores = self.projection_layer2(hn)
+            # (5)
+            loss = temporal_softmax_loss(scores, captions_out, self.ignore_index)
+
+        else:
+            N = images.shape[0]
+            # (1) (N, 3, 112, 112) --> (N, D, 4, 4) --> (N, H, 4, 4)
+            features = self.image_encoder(images)
+            A = self.projection_layer1(features)
+            # (2)
+            captions_in_vectors = self.word_embedding(captions_in)
+            # (3)
+            hn = self.attn.forward(captions_in_vectors, A)
+            # (4) (N, T, H) --> (N, T, V)
+            scores = self.projection_layer2(hn)
+            # (5)
+            loss = temporal_softmax_loss(scores, captions_out, self.ignore_index)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -529,7 +628,32 @@ class CaptioningRNN(nn.Module):
         # would both be A.mean(dim=(2, 3)).
         #######################################################################
         # Replace "pass" statement with your code
-        pass
+        prev_word = torch.full((N,), self._start, device=images.device, dtype=torch.long)
+        features = self.image_encoder(images)
+        if self.cell_type == 'attn':
+            A = self.projection_layer1(features)
+            # prev_h 和 prev_c 的初始化参考 AttentionLSTM 中老师提供的
+            prev_h = A.mean(dim=(2, 3))
+            prev_c = prev_h
+        else:    
+            pooled_features = features.mean(dim=(2, 3))
+            prev_h = self.projection_layer1(pooled_features) # (N, H)
+            prev_c = torch.zeros_like(prev_h)
+        
+
+        for t in range(max_length):
+            prev_word_vector = self.word_embedding(prev_word) # (N,) --> (N, W)
+            if self.cell_type == 'rnn':
+                prev_h = self.rnn.step_forward(prev_word_vector, prev_h) # (N, W) --> (N, H)
+            elif self.cell_type == 'lstm':
+                prev_h, prev_c = self.lstm.step_forward(prev_word_vector, prev_h, prev_c)
+            else:
+                attn, attn_weights = dot_product_attention(prev_h, A)
+                prev_h, prev_c = self.attn.step_forward(prev_word_vector, prev_h, prev_c, attn)
+                attn_weights_all[:, t] = attn_weights
+            scores = self.projection_layer2(prev_h) # (N, H) --> (N, V)
+            prev_word = scores.argmax(dim=1) # (N,)
+            captions[:, t] = prev_word
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -590,7 +714,16 @@ class LSTM(nn.Module):
         ######################################################################
         next_h, next_c = None, None
         # Replace "pass" statement with your code
-        pass
+        N, H = prev_h.shape
+        # (N, 4H) = (N, D) @ (D, 4H) + (N, H) @ (H, 4H) + (4H,)
+        a = x @ self.Wx + prev_h @ self.Wh + self.b
+        # (N, H)
+        i = torch.sigmoid(a[:, :H])
+        f = torch.sigmoid(a[:, H:2*H])
+        o = torch.sigmoid(a[:, 2*H:3*H])
+        g = torch.tanh(a[:, 3*H:])
+        next_c = f * prev_c + i * g
+        next_h = o * torch.tanh(next_c)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -624,7 +757,14 @@ class LSTM(nn.Module):
         ######################################################################
         hn = None
         # Replace "pass" statement with your code
-        pass
+        N, T, D = x.shape
+        prev_h = h0
+        prev_c = c0
+        h_list = []
+        for i in range(T):
+            prev_h, prev_c = self.step_forward(x[:, i, :], prev_h, prev_c)
+            h_list.append(prev_h)
+        hn = torch.stack(h_list, dim=1)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -655,7 +795,16 @@ def dot_product_attention(prev_h, A):
     # functions. HINT: Make sure you reshape attn_weights back to (N, 4, 4)! #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    A_flat = A.reshape(N, H, -1) # (N, H, 16)
+
+    # (N, 16) = (N, 1, H) @ (N, H, 16)
+    scores = (prev_h.unsqueeze(1) @ A_flat).squeeze(1) / math.sqrt(H)
+    w_flat = torch.softmax(scores, dim=1)  # (N, 16)
+
+    attn_weights = w_flat.reshape(N, D_a, -1)
+
+    # (N, H) = (N, H, 16) @ (N, 16, 1)
+    attn = (A_flat @ w_flat.unsqueeze(2)).squeeze(2)
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -719,7 +868,19 @@ class AttentionLSTM(nn.Module):
         #######################################################################
         next_h, next_c = None, None
         # Replace "pass" statement with your code
-        pass
+        N, H = prev_h.shape
+        
+        # 给 LSTM 加上一个注意力项，这个注意力项是把图片分成 16 块后与 prev_h 点积归一加权得到的
+
+        # (N, 4H) = (N, D) @ (D, 4H) + (N, H) @ (H, 4H) + (N, H) @ (H, 4H) + (4H,)
+        a = x @ self.Wx + prev_h @ self.Wh + attn @ self.Wattn + self.b
+        # (N, H)
+        i = torch.sigmoid(a[:, :H])
+        f = torch.sigmoid(a[:, H:2*H])
+        o = torch.sigmoid(a[:, 2*H:3*H])
+        g = torch.tanh(a[:, 3*H:])
+        next_c = f * prev_c + i * g
+        next_h = o * torch.tanh(next_c)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -762,7 +923,15 @@ class AttentionLSTM(nn.Module):
         ######################################################################
         hn = None
         # Replace "pass" statement with your code
-        pass
+        N, T, D = x.shape
+        prev_h = h0
+        prev_c = c0
+        h_list = []
+        for i in range(T):
+            attn, _ = dot_product_attention(prev_h, A)
+            prev_h, prev_c = self.step_forward(x[:, i, :], prev_h, prev_c, attn)
+            h_list.append(prev_h)
+        hn = torch.stack(h_list, dim=1)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
