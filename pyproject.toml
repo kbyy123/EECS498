@@ -14,10 +14,12 @@ dependencies = [
     "numpy>=2.4.3",
     "opencv-python>=4.13.0.92",
     "pillow>=12.1.1",
+    "scikit-learn>=1.9.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
+    "tqdm>=4.66.5",
     "wget>=3.2",
 ]
 
