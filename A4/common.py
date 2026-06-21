@@ -18,7 +18,7 @@ def hello_common():
 
 
 class DetectorBackboneWithFPN(nn.Module):
-    r"""
+    """
     Detection backbone network: A tiny RegNet model coupled with a Feature
     Pyramid Network (FPN). This model takes in batches of input images with
     shape `(B, 3, H, W)` and gives features from three different FPN levels
@@ -82,9 +82,14 @@ class DetectorBackboneWithFPN(nn.Module):
         # there are trainable weights inside it.
         # Add THREE lateral 1x1 conv and THREE output 3x3 conv layers.
         self.fpn_params = nn.ModuleDict()
-
+        
         # Replace "pass" statement with your code
-        pass
+        self.fpn_params['lateral_c3'] = nn.Conv2d(64, out_channels, 1)
+        self.fpn_params['lateral_c4'] = nn.Conv2d(160, out_channels, 1)
+        self.fpn_params['lateral_c5'] = nn.Conv2d(400, out_channels, 1)
+        
+        for i in range(3, 6):
+            self.fpn_params[f'output_p{i}'] = nn.Conv2d(out_channels, out_channels, 3, padding=1)
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -111,7 +116,16 @@ class DetectorBackboneWithFPN(nn.Module):
         ######################################################################
 
         # Replace "pass" statement with your code
-        pass
+        out_tensors = self.backbone(images)
+
+        h5 = self.fpn_params['lateral_c5'](out_tensors['c5'])
+
+        h4 = self.fpn_params['lateral_c4'](out_tensors['c4']) + F.interpolate(h5, out_tensors['c4'].shape[-2:])
+        h3 = self.fpn_params['lateral_c3'](out_tensors['c3']) + F.interpolate(h4, out_tensors['c3'].shape[-2:])
+
+        fpn_feats["p5"] = self.fpn_params['output_p5'](h5)
+        fpn_feats["p4"] = self.fpn_params['output_p4'](h4)
+        fpn_feats["p3"] = self.fpn_params['output_p3'](h3)
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -157,7 +171,14 @@ def get_fpn_location_coords(
         # TODO: Implement logic to get location co-ordinates below.          #
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        H, W = feat_shape[-2:]
+        i = torch.arange(H, device=device, dtype=dtype) * level_stride + level_stride / 2
+        j = torch.arange(W, device=device, dtype=dtype) * level_stride + level_stride / 2
+
+        grid_i, grid_j = torch.meshgrid(i, j, indexing="ij")
+
+        location_coords[level_name] = torch.stack((grid_i.reshape(-1), grid_j.reshape(-1)), dim=1)
+        
         ######################################################################
         #                             END OF YOUR CODE                       #
         ######################################################################
@@ -196,7 +217,31 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5):
     # github.com/pytorch/vision/blob/main/torchvision/csrc/ops/cpu/nms_kernel.cpp
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    keep = []
+    x1, y1, x2, y2 = boxes.unbind(dim=1)
+    areas = (x2 - x1) * (y2 - y1)
+    ordered_idx = scores.argsort(descending=True)
+    while ordered_idx.numel() > 0:
+        i = ordered_idx[0]
+        keep.append(i)
+
+        if ordered_idx.numel() == 1:
+            break
+
+        rest = ordered_idx[1:]
+
+        xx1 = torch.maximum(x1[i], x1[rest])
+        yy1 = torch.maximum(y1[i], y1[rest])
+        xx2 = torch.minimum(x2[i], x2[rest])
+        yy2 = torch.minimum(y2[i], y2[rest])
+
+        inter = (xx2 - xx1).clamp(min=0) * (yy2 - yy1).clamp(min=0)
+        union = areas[i] + areas[rest] - inter
+        iou = inter / union
+
+        ordered_idx = rest[iou <= iou_threshold]
+
+    keep = torch.stack(keep).long()
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################

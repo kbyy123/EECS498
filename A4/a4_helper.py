@@ -84,32 +84,56 @@ class VOC2007DetectionTiny(torch.utils.data.Dataset):
         """
         Try to download VOC dataset and save it to `dataset_dir`.
         """
-        import wget
+        import ssl
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
+        def download_url(url: str, file_path: str, context=None):
+            with urlopen(url, context=context) as response:
+                with open(file_path, "wb") as out_file:
+                    shutil.copyfileobj(response, out_file)
 
         os.makedirs(dataset_dir, exist_ok=True)
-        # fmt: off
-        wget.download(
-            "https://web.eecs.umich.edu/~justincj/data/VOCtrainval_06-Nov-2007.tar",
-            out=dataset_dir,
-        )
-        wget.download(
-            "https://web.eecs.umich.edu/~justincj/data/voc07_train.json",
-            out=dataset_dir,
-        )
-        wget.download(
-            "https://web.eecs.umich.edu/~justincj/data/voc07_val.json",
-            out=dataset_dir,
-        )
-        # fmt: on
+        download_specs = [
+            (
+                "https://web.eecs.umich.edu/~justincj/data/VOCtrainval_06-Nov-2007.tar",
+                "VOCtrainval_06-Nov-2007.tar",
+            ),
+            (
+                "https://web.eecs.umich.edu/~justincj/data/voc07_train.json",
+                "voc07_train.json",
+            ),
+            (
+                "https://web.eecs.umich.edu/~justincj/data/voc07_val.json",
+                "voc07_val.json",
+            ),
+        ]
+
+        for url, filename in download_specs:
+            file_path = os.path.join(dataset_dir, filename)
+            if not os.path.isfile(file_path) or os.path.getsize(file_path) == 0:
+                try:
+                    download_url(url, file_path)
+                except URLError:
+                    if os.path.isfile(file_path) and os.path.getsize(file_path) == 0:
+                        os.remove(file_path)
+                    download_url(url, file_path, ssl._create_unverified_context())
 
         # Extract TAR file:
         import tarfile
 
-        voc_tar = tarfile.open(
-            os.path.join(dataset_dir, "VOCtrainval_06-Nov-2007.tar")
-        )
-        voc_tar.extractall(dataset_dir)
-        voc_tar.close()
+        voc_root = os.path.join(dataset_dir, "VOCdevkit", "VOC2007")
+        if not os.path.isdir(voc_root):
+            voc_tar_path = os.path.join(dataset_dir, "VOCtrainval_06-Nov-2007.tar")
+            with tarfile.open(voc_tar_path) as voc_tar:
+                voc_tar.extractall(dataset_dir)
+
+        for root, dirs, files in os.walk(os.path.join(dataset_dir, "VOCdevkit")):
+            os.chmod(root, 0o755)
+            for dirname in dirs:
+                os.chmod(os.path.join(root, dirname), 0o755)
+            for filename in files:
+                os.chmod(os.path.join(root, filename), 0o644)
 
     def __len__(self):
         return len(self.instances)
